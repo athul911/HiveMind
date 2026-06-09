@@ -1,0 +1,39 @@
+# Reduced profile for local clusters (k3d / minikube): single replicas, no autoscaling,
+# local image tags, no TLS, subprocess sandbox.
+image:
+  repository: hivemind
+  tag: "local"
+  pullPolicy: IfNotPresent
+
+api:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+
+worker:
+  replicaCount: 1
+  keda:
+    enabled: false
+
+cleanup:
+  enabled: true
+
+config:
+  ENVIRONMENT: local
+  LOG_LEVEL: DEBUG
+  SANDBOX_BACKEND: subprocess
+  LLM_DEFAULT_PROVIDER: ollama
+  LLM_DEFAULT_MODEL: llama3.1
+
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 2Gi
+
+ingress:
+  enabled: false
+  tls:
+    enabled: false
+
+serviceMonitor:
+  enabled: false

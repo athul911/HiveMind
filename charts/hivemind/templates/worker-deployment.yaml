@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hivemind.fullname" . }}-worker
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.worker.keda.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hivemind.name" . }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "hivemind.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Graceful shutdown: let the in-flight task finish before the pod is killed.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: {{ toYaml .Values.worker.command | nindent 12 }}
+          envFrom:
+            {{- include "hivemind.envFrom" . | nindent 12 }}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: artifacts
+              mountPath: {{ .Values.config.ARTIFACT_BASE_PATH }}
+      volumes:
+        - name: artifacts
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "hivemind.fullname" . }}-artifacts
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

@@ -1,0 +1,42 @@
+{
+  "title": "HiveMind",
+  "uid": "hivemind-overview",
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Workflow duration (p95)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(hivemind_workflow_duration_seconds_bucket[5m])) by (le, mode))",
+          "legendFormat": "{{mode}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool calls / sec",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(hivemind_tool_calls_total[5m])) by (tool, success)",
+          "legendFormat": "{{tool}} ({{success}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM tokens used / sec",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(hivemind_llm_tokens_used_total[5m])) by (provider, model, direction)",
+          "legendFormat": "{{provider}}/{{model}} {{direction}}"
+        }
+      ]
+    }
+  ]
+}

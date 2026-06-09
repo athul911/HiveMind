@@ -1,0 +1,34 @@
+{{- if .Values.worker.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "hivemind.fullname" . }}-worker
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "hivemind.fullname" . }}-worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicas }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.worker.keda.queueName }}
+        mode: QueueLength
+        value: {{ .Values.worker.keda.queueLength | quote }}
+      authenticationRef:
+        name: {{ include "hivemind.fullname" . }}-rabbitmq-auth
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "hivemind.fullname" . }}-rabbitmq-auth
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ include "hivemind.secretName" . }}
+      key: RABBITMQ_URL
+{{- end }}

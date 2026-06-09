@@ -1,0 +1,107 @@
+# Default values for HiveMind (production-leaning). Override per environment.
+image:
+  repository: ghcr.io/your-org/hivemind
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ---- API deployment ----
+api:
+  replicaCount: 2
+  command: ["uvicorn", "hivemind.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  containerPort: 8000
+  resources:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits: { cpu: "1", memory: "1Gi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    # Custom RPS metric (requires Prometheus Adapter):
+    targetRequestsPerSecond: 50
+
+# ---- Worker deployment ----
+worker:
+  replicaCount: 2
+  command: ["python", "-m", "hivemind.workers.consumer"]
+  resources:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits: { cpu: "1", memory: "1Gi" }
+  # KEDA autoscaling on RabbitMQ queue depth.
+  keda:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 20
+    queueName: hivemind.tasks
+    queueLength: "5"
+    # host is read from the rabbitmq secret key below.
+
+# ---- Cleanup CronJob (ephemeral agents / expired tasks) ----
+cleanup:
+  enabled: true
+  schedule: "*/5 * * * *"
+  command: ["python", "-c", "import asyncio; from hivemind.bootstrap import build_context; from hivemind.config import get_settings; \nasync def m():\n  async with build_context(get_settings()) as c:\n    await c.scheduler.run_once()\nasyncio.run(m())"]
+
+# ---- Non-secret config (ConfigMap) ----
+config:
+  ENVIRONMENT: production
+  LOG_LEVEL: INFO
+  LLM_DEFAULT_PROVIDER: anthropic
+  LLM_DEFAULT_MODEL: claude-opus-4-8
+  SANDBOX_BACKEND: docker
+  ARTIFACT_BASE_PATH: /data/artifacts
+  WORKFLOW_ASYNC_THRESHOLD_STEPS: "3"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  SKILLS_DIR: /app/skills
+
+# ---- Secrets ----
+# Set existingSecret to use an externally-managed Secret / ExternalSecret instead.
+secrets:
+  existingSecret: ""
+  data:
+    DATABASE_URL: ""
+    SQL_TOOL_DATABASE_URL: ""
+    RABBITMQ_URL: ""
+    REDIS_URL: ""
+    JWT_SECRET: ""
+    ANTHROPIC_API_KEY: ""
+    OPENAI_API_KEY: ""
+
+externalSecret:
+  enabled: false
+  secretStoreRef:
+    name: aws-secretsmanager
+    kind: ClusterSecretStore
+  remoteKeyPrefix: hivemind/
+
+# ---- Artifact storage ----
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteMany
+  size: 20Gi
+
+# ---- Ingress (TLS) ----
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: hivemind.example.com
+  tls:
+    enabled: true
+    secretName: hivemind-tls
+
+# ---- Prometheus ServiceMonitor ----
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  path: /metrics
+
+service:
+  type: ClusterIP
+  port: 80

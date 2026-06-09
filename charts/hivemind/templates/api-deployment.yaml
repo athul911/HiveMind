@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hivemind.fullname" . }}-api
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "hivemind.name" . }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "hivemind.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: {{ toYaml .Values.api.command | nindent 12 }}
+          ports:
+            - containerPort: {{ .Values.api.containerPort }}
+          envFrom:
+            {{- include "hivemind.envFrom" . | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /readyz, port: {{ .Values.api.containerPort }} }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .Values.api.containerPort }} }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: artifacts
+              mountPath: {{ .Values.config.ARTIFACT_BASE_PATH }}
+      volumes:
+        - name: artifacts
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "hivemind.fullname" . }}-artifacts
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

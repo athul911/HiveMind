@@ -1,0 +1,131 @@
+# Local development & integration stack for HiveMind.
+# `make up` starts everything; `make migrate` applies the schema.
+name: hivemind
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://hivemind:hivemind@postgres:5432/hivemind
+  SQL_TOOL_DATABASE_URL: postgresql+asyncpg://hivemind_ro:hivemind_ro@postgres:5432/hivemind
+  RABBITMQ_URL: amqp://hivemind:hivemind@rabbitmq:5672/
+  REDIS_URL: redis://redis:6379/0
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  ARTIFACT_BASE_PATH: /data/artifacts
+  SANDBOX_BACKEND: ${SANDBOX_BACKEND:-subprocess}
+  LLM_DEFAULT_PROVIDER: ${LLM_DEFAULT_PROVIDER:-ollama}
+  LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-llama3.1}
+  OLLAMA_BASE_URL: http://host.docker.internal:11434
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  JWT_SECRET: ${JWT_SECRET:-local-dev-secret}
+  AUTH_DISABLED: ${AUTH_DISABLED:-true}
+  ENVIRONMENT: local
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  api:
+    build: .
+    command: uvicorn hivemind.main:app --host 0.0.0.0 --port 8000 --reload
+    environment: *app-env
+    volumes:
+      - ./hivemind:/app/hivemind
+      - ./skills:/app/skills
+      - artifacts:/data/artifacts
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_started}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build: .
+    command: python -m hivemind.workers.consumer
+    environment: *app-env
+    volumes:
+      - ./hivemind:/app/hivemind
+      - ./skills:/app/skills
+      - artifacts:/data/artifacts
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_started}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: hivemind
+      POSTGRES_PASSWORD: hivemind
+      POSTGRES_DB: hivemind
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init-readonly.sql:/docker-entrypoint-initdb.d/init-readonly.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hivemind"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: hivemind
+      RABBITMQ_DEFAULT_PASS: hivemind
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./deploy/otel/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"
+      - "8889:8889"  # prometheus exporter
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:
+  artifacts:

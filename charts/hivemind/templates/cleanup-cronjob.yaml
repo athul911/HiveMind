@@ -1,0 +1,29 @@
+{{- if .Values.cleanup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hivemind.fullname" . }}-cleanup
+  labels:
+    {{- include "hivemind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cleanup
+spec:
+  schedule: {{ .Values.cleanup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: cleanup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: {{ toYaml .Values.cleanup.command | nindent 16 }}
+              envFrom:
+                {{- include "hivemind.envFrom" . | nindent 16 }}
+{{- end }}

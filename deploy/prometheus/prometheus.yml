@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Metrics flowing through the OTel collector's Prometheus exporter.
+  - job_name: hivemind-otel
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Direct scrape of the API's /metrics endpoint.
+  - job_name: hivemind-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
