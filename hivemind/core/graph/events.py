@@ -19,6 +19,13 @@ class GraphEvent:
         return {"type": self.type, "data": self.data}
 
 
+def conversation(conversation_id: str, request_id: str | None = None) -> GraphEvent:
+    """First event on an SSE stream: tells the client the conversation id to reuse."""
+    return GraphEvent(
+        "conversation", {"conversation_id": conversation_id, "request_id": request_id}
+    )
+
+
 def node_start(node: str, agent_id: str | None = None) -> GraphEvent:
     return GraphEvent("node_start", {"node": node, "agent_id": agent_id})
 

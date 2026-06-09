@@ -7,6 +7,8 @@ agents are hydrated into the registry. Agents are immutable — there is no upda
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from hivemind.core.agents.agent import Agent
 from hivemind.core.agents.registry import AgentRegistry
 from hivemind.core.errors import NotFoundError
@@ -60,14 +62,37 @@ class AgentService:
         return len(models)
 
     async def ensure_exists(self, agent: Agent) -> Agent:
-        """Provision a built-in agent if no agent with its name exists."""
+        """Provision/reconcile a built-in agent.
+
+        If no agent with this name exists, create it. If one exists but its LLM provider/model
+        has drifted from the desired config (e.g. the operator switched ``LLM_DEFAULT_PROVIDER``
+        from ollama to openai), provision a **new version** with the current config and retire
+        the old one. This keeps system-managed built-ins in sync with configuration without
+        violating per-version immutability.
+        """
         async with self._db.session() as session:
             existing = await AgentRepository(session).get_by_name(agent.name)
-        if existing is not None:
-            hydrated = _model_to_agent(existing)
+        if existing is None:
+            return await self.create(agent)
+
+        hydrated = _model_to_agent(existing)
+        desired = agent.llm_config
+        current = hydrated.llm_config
+        if (current.provider, current.model) == (desired.provider, desired.model):
             self._registry.add(hydrated)
             return hydrated
-        return await self.create(agent)
+
+        logger.info(
+            "agent.reprovision",
+            name=agent.name,
+            from_provider=current.provider,
+            to_provider=desired.provider,
+            from_model=current.model,
+            to_model=desired.model,
+        )
+        new_version = replace(agent, version=existing.version + 1)
+        await self.decommission(existing.id)
+        return await self.create(new_version)
 
 
 def _model_to_agent(model: AgentModel) -> Agent:

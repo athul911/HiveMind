@@ -15,6 +15,7 @@ from hivemind.core.errors import BudgetExceededError
 from hivemind.core.graph import events
 from hivemind.core.graph.deps import GraphDeps
 from hivemind.core.llm.base import (
+    DoneEvent,
     LLMRequest,
     Message,
     TextDelta,
@@ -62,6 +63,7 @@ async def run_agent_turn(
         )
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
+        stop_reason = "end_turn"
         async for ev in provider.stream(request):
             if isinstance(ev, TextDelta):
                 text_parts.append(ev.text)
@@ -71,6 +73,8 @@ async def run_agent_turn(
             elif isinstance(ev, UsageEvent):
                 total_usage = total_usage + ev.usage
                 emit(events.usage(ev.usage.input_tokens, ev.usage.output_tokens))
+            elif isinstance(ev, DoneEvent):
+                stop_reason = ev.stop_reason
 
         if (
             token_budget is not None
@@ -88,6 +92,18 @@ async def run_agent_turn(
 
         if not tool_calls:
             final_text = assistant_text
+            # Surface why the turn ended so callers can spot truncation ("length") or a model
+            # that answered in plain text without calling an expected tool ("end_turn"/"stop").
+            emit(
+                events.GraphEvent(
+                    "agent_finished",
+                    {
+                        "agent_id": ctx.agent_id,
+                        "stop_reason": stop_reason,
+                        "had_tool_calls": False,
+                    },
+                )
+            )
             break
 
         # Execute requested tools and feed results back.

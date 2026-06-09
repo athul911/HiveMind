@@ -1,44 +1,81 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
+DATA_SERVICES := postgres rabbitmq redis
+APP_SERVICES := api worker
 
-.PHONY: help up down migrate seed test lint typecheck fmt install token logs
+# Run Python/dev tools via the local .venv if it exists, else fall back to `uv run`.
+ifneq (,$(wildcard .venv/bin/python))
+RUN := . .venv/bin/activate &&
+else
+RUN := uv run
+endif
+
+.PHONY: help up down clean restart migrate seed seed-data logs \
+        db-up db-down app-up app-down \
+        test test-integration lint typecheck fmt install token
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install dependencies with uv into a local venv
-	uv venv && uv pip install -e ".[dev]"
+install: ## Install dependencies into .venv (uses uv if available, else python venv + pip)
+	@if command -v uv >/dev/null 2>&1; then \
+		uv venv && uv pip install -e ".[dev]"; \
+	else \
+		python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install -e ".[dev]"; \
+	fi
 
-up: ## Start the full local stack
+up: ## Start the full stack (auto-applies migrations before app starts)
 	$(COMPOSE) up -d --build
 
-down: ## Stop the stack and remove volumes
+down: ## Stop & remove containers — KEEPS the database volume (data persists)
+	$(COMPOSE) down
+
+clean: ## Stop and DELETE all volumes (full wipe — destroys the database)
 	$(COMPOSE) down -v
 
+restart: ## Restart only the app containers (api + worker), leaving data running
+	$(COMPOSE) restart $(APP_SERVICES)
+
+# ---- granular lifecycle: data plane vs app plane -------------------------
+db-up: ## Start only Postgres + RabbitMQ + Redis
+	$(COMPOSE) up -d $(DATA_SERVICES)
+
+db-down: ## Stop the data services WITHOUT removing them (data persists)
+	$(COMPOSE) stop $(DATA_SERVICES)
+
+app-up: ## Build & start only the api + worker (runs migrations first)
+	$(COMPOSE) up -d --build $(APP_SERVICES)
+
+app-down: ## Stop only the api + worker (data services keep running)
+	$(COMPOSE) stop $(APP_SERVICES)
+
 logs: ## Tail API + worker logs
-	$(COMPOSE) logs -f api worker
+	$(COMPOSE) logs -f $(APP_SERVICES)
 
-migrate: ## Apply database migrations (inside the api container)
-	$(COMPOSE) run --rm api alembic upgrade head
+migrate: ## Apply database migrations manually (auto-run on `up`)
+	$(COMPOSE) run --rm migrate
 
-seed: ## Hydrate built-in agents (happens on startup; this is a no-op trigger)
-	$(COMPOSE) restart api worker
+seed: ## Restart app containers (built-in agents hydrate on startup)
+	$(COMPOSE) restart $(APP_SERVICES)
+
+seed-data: ## Load a richer demo analytics dataset (customers/products/orders) for SQL testing
+	$(COMPOSE) exec -T postgres psql -U hivemind -d hivemind < deploy/postgres/seed-demo.sql
 
 test: ## Run the test suite with coverage
-	uv run pytest --cov=hivemind/core --cov=hivemind/api --cov-report=term-missing
+	$(RUN) pytest --cov=hivemind/core --cov=hivemind/api --cov-report=term-missing
 
 test-integration: ## Run integration tests (needs the stack up)
-	uv run pytest -m integration
+	$(RUN) pytest -m integration
 
 lint: ## Lint with ruff
-	uv run ruff check hivemind tests
+	$(RUN) ruff check hivemind tests
 
 fmt: ## Auto-format with ruff
-	uv run ruff check --fix hivemind tests && uv run ruff format hivemind tests
+	$(RUN) ruff check --fix hivemind tests && $(RUN) ruff format hivemind tests
 
 typecheck: ## Type-check with mypy
-	uv run mypy hivemind
+	$(RUN) mypy hivemind
 
 token: ## Mint a dev JWT (HS256) for local API calls
-	@uv run python scripts/mint_token.py
+	@$(RUN) python scripts/mint_token.py

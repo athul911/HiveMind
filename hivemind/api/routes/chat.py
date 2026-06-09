@@ -9,9 +9,10 @@ from sse_starlette.sse import EventSourceResponse
 
 from hivemind.api.deps import AppCtx, CurrentUser, Dispatcher
 from hivemind.api.schemas.chat import AsyncTaskResponse, ChatCompletionRequest
-from hivemind.api.sse import graph_event_sse
-from hivemind.core.context import update_context
+from hivemind.api.sse import format_sse, graph_event_sse
+from hivemind.core.context import get_context, update_context
 from hivemind.core.errors import NotFoundError
+from hivemind.core.graph import events
 from hivemind.db.repository import ConversationRepository, MessageRepository
 from hivemind.services.mode_selector import ModeSelector
 
@@ -57,7 +58,20 @@ async def chat_completions(
         user_message=user_message,
         mode="sse",
     )
-    return EventSourceResponse(graph_event_sse(stream))
+    ctx = get_context()
+    request_id = ctx.request_id if ctx else None
+
+    async def sse_stream():
+        # First frame announces the conversation id so a first-time caller can capture it
+        # and reuse it on follow-up turns (also exposed as the x-conversation-id header).
+        yield format_sse(events.conversation(conversation_id, request_id))
+        async for frame in graph_event_sse(stream):
+            yield frame
+
+    return EventSourceResponse(
+        sse_stream(),
+        headers={"x-conversation-id": conversation_id},
+    )
 
 
 @router.get("/v1/conversations/{conversation_id}")

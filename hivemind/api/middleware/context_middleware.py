@@ -72,7 +72,9 @@ class ContextMiddleware(BaseHTTPMiddleware):
 
     def _authenticate(self, request: Request):
         header = request.headers.get("authorization", "")
-        if not header.lower().startswith("bearer "):
+        token = header.split(" ", 1)[1].strip() if header.lower().startswith("bearer ") else ""
+        # When auth is disabled (local dev), no header is required — the verifier returns a
+        # local-dev principal. Otherwise a Bearer token is mandatory.
+        if not token and not self._verifier.auth_disabled:
             raise AuthenticationError("Missing or malformed Authorization header.")
-        token = header.split(" ", 1)[1].strip()
         return self._verifier.verify(token)

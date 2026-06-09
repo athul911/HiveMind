@@ -24,7 +24,6 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -70,7 +69,8 @@ class SkillModel(Base):
 class ConversationModel(Base):
     __tablename__ = "conversations"
 
-    id: Mapped[str] = mapped_column(PG_UUID(as_uuid=False), primary_key=True, default=_uuid)
+    # String(64) to match every column that references it (FK type parity).
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String(255), index=True)
     agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)

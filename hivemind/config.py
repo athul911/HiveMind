@@ -8,10 +8,10 @@ keeping configuration out of global mutable state.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 SandboxBackend = Literal["docker", "subprocess"]
 LLMProviderName = Literal["anthropic", "openai", "azure", "vllm", "ollama"]
@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     sql_tool_database_url: str | None = None
     sql_tool_statement_timeout_ms: int = 10_000
     sql_tool_max_rows: int = 1_000
-    sql_tool_allowed_schemas: list[str] = Field(default_factory=lambda: ["public"])
+    # NoDecode: read as a raw string from env and split via _split_csv (not JSON-parsed).
+    sql_tool_allowed_schemas: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["public"]
+    )
 
     # ---- broker / cache ---------------------------------------------------
     rabbitmq_url: str = "amqp://hivemind:hivemind@localhost:5672/"
@@ -50,7 +53,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # ---- auth -------------------------------------------------------------
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = "hivemind-local-dev-secret-change-me-in-prod"
     jwt_algorithm: str = "HS256"
     jwt_audience: str | None = None
     jwt_issuer: str | None = None
@@ -105,7 +108,7 @@ class Settings(BaseSettings):
     # ---- authz / cors -----------------------------------------------------
     rbac_enabled: bool = False  # when true, agent-management routes require admin_scope
     admin_scope: str = "hivemind:admin"
-    cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_allow_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
 
     # ---- skills -----------------------------------------------------------
     skills_dir: str = "skills"

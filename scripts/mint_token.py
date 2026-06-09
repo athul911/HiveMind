@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import sys
 import time
+import warnings
 
 import jwt
 
 from hivemind.config import get_settings
+
+# This is a local-dev helper; a short default JWT_SECRET is fine here. Quiet the SDK's
+# key-length advisory so the token is the only thing printed. (Use a 32+ byte secret
+# in production — see .env.example.)
+warnings.filterwarnings("ignore", message=".*HMAC key.*", module="jwt")
 
 
 def main() -> None:

@@ -12,13 +12,29 @@ it. For architecture see [DESIGN.md](DESIGN.md); for the build plan see [PLAN.md
 ```bash
 cp .env.example .env
 make up          # api, worker, postgres, rabbitmq, redis, otel, jaeger, prometheus, grafana
-make migrate     # create the schema
+                 # schema migrations run automatically (one-shot `migrate` service) before
+                 # the app starts — no manual `make migrate` needed on first boot.
 ```
 
 The compose stack defaults to **Ollama** as the LLM provider (zero API keys/cost) and the
 **subprocess** sandbox. Run Ollama on your host (`ollama serve` + `ollama pull llama3.1`), or
 switch providers (see §7). `AUTH_DISABLED=true` is set in compose so you can call the API
 without a token while developing.
+
+**Lifecycle / data persistence:**
+
+| Command | Effect |
+| --- | --- |
+| `make up` | Start everything; auto-applies migrations first |
+| `make down` | Stop & remove containers — **keeps the database volume** (data persists) |
+| `make clean` | Stop and **delete all volumes** (full wipe — destroys the DB) |
+| `make db-up` / `make db-down` | Start / stop just Postgres + RabbitMQ + Redis |
+| `make app-up` / `make app-down` | Start / stop just the api + worker (data keeps running) |
+| `make restart` | Restart the app containers only |
+| `make migrate` | Apply migrations manually (rarely needed — `up` does it) |
+
+> Migrations are idempotent (`alembic upgrade head`), so they're a no-op once the schema is
+> current. `make down` no longer wipes data — use `make clean` for an intentional reset.
 
 | Service | URL |
 | --- | --- |
@@ -83,12 +99,14 @@ the JSON is `{"type": ..., "data": {...}}`. Event types:
 
 | Event | Meaning |
 | --- | --- |
+| `conversation` | First event — carries the `conversation_id` (and `request_id`) to reuse |
 | `node_start` / `node_end` | A graph node (supervisor or agent) started/finished |
 | `routing_decision` | The supervisor's chosen plan (`single`/`sequential`/`parallel`/`conditional`) |
 | `text_delta` | An incremental chunk of the assistant's answer |
 | `tool_call` / `tool_result` | A tool was invoked and returned |
 | `condition_check` / `condition_result` | Conditional routing evaluated a branch |
 | `usage` | Token usage for a model call |
+| `agent_finished` | An agent turn ended; `data.stop_reason` explains why (`end_turn`/`length`/…) and whether it called a tool |
 | `message` | The final assistant message (also persisted) |
 | `done` | Terminal event; `data.final` is the full answer |
 | `error` | Something failed; `data.detail` explains |
@@ -105,8 +123,17 @@ curl -N http://localhost:8000/v1/chat/completions \
        "messages": [{"role": "user", "content": "Now break that down by product."}]}'
 ```
 
-Omit `conversation_id` and one is generated (returned on the task response, or as the
-`x-request-id`/event context for SSE).
+**Finding the conversation id on a first message:** if you omit `conversation_id`, the server
+generates one and tells you immediately:
+
+- **SSE mode:** the **first event** is `conversation`, carrying the id, and it's also returned
+  as the `x-conversation-id` response header:
+  ```
+  event: conversation
+  data: {"type":"conversation","data":{"conversation_id":"<uuid>","request_id":"<uuid>"}}
+  ```
+  Capture that id and pass it back as `conversation_id` on the next turn.
+- **Queue mode:** the JSON response includes `conversation_id` (and `task_id`).
 
 ### Long-running (queue mode)
 
@@ -304,6 +331,7 @@ Prometheus ServiceMonitor. Supply secrets via `secrets.data`, an `existingSecret
 
 | Symptom | Likely cause / fix |
 | --- | --- |
+| `relation "agents" does not exist` | Schema not migrated. `make up` now auto-runs migrations; if you started services piecemeal, run `make migrate`. (Don't use `make clean` between runs — it wipes the DB; use `make down`.) |
 | `401 application/problem+json` | Missing/invalid `Authorization: Bearer` header; set `AUTH_DISABLED=true` for local, or mint a token. |
 | `400 Unsafe SQL Rejected` | The SQL tool only allows a single read-only `SELECT`/`WITH`. |
 | Chat hangs with no tokens | Provider unreachable (e.g. Ollama not running) — check `make logs`; the circuit breaker will fast-fail after repeated failures. |

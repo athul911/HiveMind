@@ -49,7 +49,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "conversations",
-        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
+        # String(64) to match messages.conversation_id / tasks.conversation_id (FK parity).
+        sa.Column("id", sa.String(64), primary_key=True),
         sa.Column("user_id", sa.String(255), nullable=False, index=True),
         sa.Column("agent_id", sa.String(64), nullable=True),
         sa.Column("status", sa.String(32), nullable=False, server_default="active", index=True),

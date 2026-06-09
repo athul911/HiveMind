@@ -87,7 +87,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agents.router)
     app.include_router(catalog.router)
     app.include_router(tasks.router)
+    _install_bearer_security(app)
     return app
+
+
+def _install_bearer_security(app: FastAPI) -> None:
+    """Advertise Bearer auth in the OpenAPI schema so Swagger shows an Authorize button.
+
+    Auth is enforced in middleware (not via route dependencies), so FastAPI wouldn't
+    otherwise know to render the token field. We inject the security scheme into the
+    generated schema and apply it globally.
+    """
+    from fastapi.openapi.utils import get_openapi
+
+    def custom_openapi() -> dict:
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {}).setdefault("securitySchemes", {})["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+        # Global default; public endpoints (health/metrics) ignore it harmlessly.
+        schema["security"] = [{"bearerAuth": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = custom_openapi
 
 
 app = create_app()

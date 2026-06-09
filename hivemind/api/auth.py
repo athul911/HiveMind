@@ -29,6 +29,10 @@ class TokenVerifier:
             PyJWKClient(settings.oauth2_jwks_url) if settings.oauth2_jwks_url else None
         )
 
+    @property
+    def auth_disabled(self) -> bool:
+        return self._settings.auth_disabled
+
     def verify(self, token: str) -> Principal:
         if self._settings.auth_disabled:
             return Principal(user_id="local-dev", claims={"sub": "local-dev"})

@@ -5,7 +5,7 @@ REST endpoints, SSE + RabbitMQ execution modes, PostgreSQL persistence and crash
 checkpointing, container-isolated code execution, a per-agent skills system, and full
 OpenTelemetry observability.
 
-- **Usage:** [USAGE.md](USAGE.md) · **Plan:** [PLAN.md](PLAN.md) · **Design:** [DESIGN.md](DESIGN.md)
+- **Usage:** [USAGE.md](USAGE.md) · **End-to-end test flow:** [TESTING.md](TESTING.md) · **Plan:** [PLAN.md](PLAN.md) · **Design:** [DESIGN.md](DESIGN.md)
 
 ## Highlights
 
@@ -28,8 +28,8 @@ OpenTelemetry observability.
 
 ```bash
 cp .env.example .env
-make up           # api, worker, postgres, rabbitmq, redis, otel, jaeger, prometheus, grafana
-make migrate      # apply the schema
+make up            # api, worker, postgres, rabbitmq, redis, otel, jaeger, prometheus, grafana
+                   # (schema migrations run automatically before the app starts)
 
 # mint a dev token and call the API
 TOKEN=$(make -s token)
@@ -41,6 +41,10 @@ curl -N http://localhost:8000/v1/chat/completions \
 
 For zero-cost local runs set `LLM_DEFAULT_PROVIDER=ollama` (default in compose) and run
 Ollama on the host. For Anthropic/OpenAI set the relevant API key in `.env`.
+
+Lifecycle: `make down` stops everything but **keeps your data**; `make clean` wipes the
+database volume. Manage the data plane and app plane independently with `make db-up`/`db-down`
+and `make app-up`/`app-down` (e.g. restart the API without touching Postgres).
 
 | Service | URL |
 | --- | --- |

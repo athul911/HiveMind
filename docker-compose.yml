@@ -12,9 +12,16 @@ x-app-env: &app-env
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-subprocess}
   LLM_DEFAULT_PROVIDER: ${LLM_DEFAULT_PROVIDER:-ollama}
   LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-llama3.1}
-  OLLAMA_BASE_URL: http://host.docker.internal:11434
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  # OpenAI-compatible gateway / proxy base URL (OpenRouter, vLLM, Azure-style, etc.).
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+  AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-10-21}
+  VLLM_BASE_URL: ${VLLM_BASE_URL:-http://localhost:8000/v1}
+  VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
   JWT_SECRET: ${JWT_SECRET:-local-dev-secret}
   AUTH_DISABLED: ${AUTH_DISABLED:-true}
   ENVIRONMENT: local
@@ -35,6 +42,7 @@ services:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
       redis: {condition: service_started}
+      migrate: {condition: service_completed_successfully}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -50,8 +58,21 @@ services:
       postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
       redis: {condition: service_started}
+      migrate: {condition: service_completed_successfully}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # One-shot schema migration. Runs to completion before api/worker start, on every `up`.
+  # Idempotent (alembic upgrade head), so it's a no-op once the schema is current.
+  migrate:
+    build: .
+    command: alembic upgrade head
+    environment: *app-env
+    volumes:
+      - ./hivemind:/app/hivemind
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
 
   postgres:
     image: postgres:15
