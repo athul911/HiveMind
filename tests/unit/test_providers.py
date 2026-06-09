@@ -82,61 +82,114 @@ async def test_ollama_error_wrapped():
     await client.aclose()
 
 
-# ---- OpenAI-compatible (fake client) --------------------------------------
+# ---- OpenAI-compatible (httpx MockTransport, lenient SSE parsing) ----------
 
 
-class _FakeChunk:
-    def __init__(self, content=None, tool=None, finish=None, usage=None):
-        delta = SimpleNamespace(content=content, tool_calls=tool)
-        self.choices = (
-            [SimpleNamespace(delta=delta, finish_reason=finish)]
-            if (content or tool or finish)
-            else []
-        )
-        self.usage = usage
+def _sse(*chunks: dict) -> str:
+    lines = [f"data: {json.dumps(c)}" for c in chunks]
+    lines.append("data: [DONE]")
+    return "\n\n".join(lines) + "\n\n"
 
 
-class _FakeStream:
-    def __init__(self, chunks):
-        self._chunks = chunks
+def _openai_provider(body: str, *, capture: dict | None = None):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if capture is not None:
+            capture["url"] = str(request.url)
+            capture["headers"] = dict(request.headers)
+            capture["json"] = json.loads(request.content)
+        return httpx.Response(200, content=body)
 
-    def __aiter__(self):
-        async def gen():
-            for c in self._chunks:
-                yield c
-
-        return gen()
-
-
-class _FakeOpenAIClient:
-    def __init__(self, chunks):
-        self._chunks = chunks
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
-
-    async def _create(self, **kwargs):
-        self.last_kwargs = kwargs
-        return _FakeStream(self._chunks)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return OpenAICompatibleProvider(
+        base_url="https://gw.example.com/v1", api_key="k", name="openai", client=client
+    )
 
 
-async def test_openai_stream_text_tools_usage():
-    tool_delta = [
-        SimpleNamespace(
-            index=0,
-            id="call_1",
-            function=SimpleNamespace(name="add", arguments='{"a":1}'),
-        )
-    ]
-    chunks = [
-        _FakeChunk(content="Hi "),
-        _FakeChunk(content="there"),
-        _FakeChunk(tool=tool_delta),
-        _FakeChunk(finish="stop", usage=SimpleNamespace(prompt_tokens=5, completion_tokens=2)),
-    ]
-    provider = OpenAICompatibleProvider(_FakeOpenAIClient(chunks), name="openai")
+async def test_openai_stream_standard_indexed_tool_call():
+    body = _sse(
+        {"choices": [{"index": 0, "delta": {"content": "Hi "}}]},
+        {"choices": [{"index": 0, "delta": {"content": "there"}}]},
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "add", "arguments": '{"a":1}'},
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 2}},
+    )
+    provider = _openai_provider(body)
     out = [ev async for ev in provider.stream(_req(tools=True))]
     assert "".join(e.text for e in out if isinstance(e, TextDelta)) == "Hi there"
     tc = next(e for e in out if isinstance(e, ToolCallEvent))
     assert tc.tool_call.name == "add" and tc.tool_call.arguments == {"a": 1}
+
+
+async def test_openai_stream_google_style_indexless_tool_call():
+    # Google's Gemini OpenAI-compat endpoint omits `index` and returns finish_reason "stop"
+    # alongside a complete tool call. The lenient parser must still surface it.
+    body = _sse(
+        {"choices": [{"index": 0, "delta": {"content": "<thought>plan</thought>"}}]},
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "id": "vxc47gt1",
+                                "type": "function",
+                                "function": {
+                                    "name": "sql_query",
+                                    "arguments": '{"sql":"SELECT 1"}',
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    )
+    provider = _openai_provider(body)
+    out = [ev async for ev in provider.stream(_req(tools=True))]
+    tc = next(e for e in out if isinstance(e, ToolCallEvent))
+    assert tc.tool_call.name == "sql_query"
+    assert tc.tool_call.arguments == {"sql": "SELECT 1"}
+
+
+async def test_openai_azure_endpoint_and_auth_header():
+    capture: dict = {}
+    body = _sse({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        capture["url"] = str(request.url)
+        capture["headers"] = dict(request.headers)
+        return httpx.Response(200, content=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        base_url="https://my.openai.azure.com",
+        api_key="azkey",
+        name="azure",
+        auth="azure",
+        api_version="2024-10-21",
+        client=client,
+    )
+    _ = [ev async for ev in provider.stream(_req())]
+    assert "/openai/deployments/m/chat/completions" in capture["url"]
+    assert "api-version=2024-10-21" in capture["url"]
+    assert capture["headers"].get("api-key") == "azkey"
 
 
 # ---- Anthropic (fake stream client) ---------------------------------------

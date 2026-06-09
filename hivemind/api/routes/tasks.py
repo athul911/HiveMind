@@ -53,6 +53,10 @@ async def task_stream(
         import json
 
         async for seq, event in buffer.replay_and_tail(task_id, after_seq=after_seq):
-            yield {"id": str(seq), "event": event.type, "data": json.dumps(event.to_dict())}
+            yield {
+                "id": str(seq),
+                "event": event.type,
+                "data": json.dumps(event.to_dict(), default=str),
+            }
 
     return EventSourceResponse(generator())

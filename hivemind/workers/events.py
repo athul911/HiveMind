@@ -40,7 +40,7 @@ class TaskEventBuffer:
             await TaskEventRepository(session).append(task_id, seq, event.type, payload)
         await self._redis.xadd(
             _stream_key(task_id),
-            {"seq": seq, "data": json.dumps(payload)},
+            {"seq": seq, "data": json.dumps(payload, default=str)},
             maxlen=10_000,
             approximate=True,
         )

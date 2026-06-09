@@ -121,7 +121,12 @@ class SQLTool(BaseTool):
             result = await conn.execute(text(sql), params)
             columns = list(result.keys())
             rows = result.fetchmany(max_rows)
-            data = [dict(zip(columns, row, strict=False)) for row in rows]
+            # Coerce DB-native types (Decimal, datetime, UUID, ...) to JSON-native values so
+            # results survive SSE/JSONB serialization downstream.
+            data = [
+                {col: _jsonable(val) for col, val in zip(columns, row, strict=False)}
+                for row in rows
+            ]
 
         # Large result sets are written to the artifact store; only a ref + preview returned.
         if len(data) > _INLINE_ROWCAP:
@@ -162,3 +167,20 @@ class SQLTool(BaseTool):
     async def aclose(self) -> None:
         if self._engine is not None:
             await self._engine.dispose()
+
+
+def _jsonable(value):
+    """Convert a DB value to a JSON-native type for safe serialization."""
+    import datetime as _dt
+    import uuid as _uuid
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return value.isoformat()
+    if isinstance(value, _uuid.UUID):
+        return str(value)
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).decode("utf-8", "replace")
+    return value

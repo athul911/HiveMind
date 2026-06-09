@@ -49,34 +49,33 @@ class LLMProviderFactory:
             )
 
         if provider == "openai":
-            from openai import AsyncOpenAI
-
             from hivemind.core.llm.openai_provider import OpenAICompatibleProvider
 
-            client = AsyncOpenAI(api_key=s.openai_api_key, base_url=s.openai_base_url)
-            return OpenAICompatibleProvider(client, name="openai")
+            return OpenAICompatibleProvider(
+                base_url=s.openai_base_url or "https://api.openai.com/v1",
+                api_key=s.openai_api_key,
+                name="openai",
+            )
 
         if provider == "azure":
-            from openai import AsyncAzureOpenAI
-
             from hivemind.core.llm.openai_provider import OpenAICompatibleProvider
 
             if not s.azure_openai_endpoint:
                 raise LLMProviderError("AZURE_OPENAI_ENDPOINT is not configured.")
-            client = AsyncAzureOpenAI(
-                azure_endpoint=s.azure_openai_endpoint,
+            return OpenAICompatibleProvider(
+                base_url=s.azure_openai_endpoint,
                 api_key=s.azure_openai_api_key,
+                name="azure",
+                auth="azure",
                 api_version=s.azure_openai_api_version,
             )
-            return OpenAICompatibleProvider(client, name="azure")
 
         if provider == "vllm":
-            from openai import AsyncOpenAI
-
             from hivemind.core.llm.openai_provider import OpenAICompatibleProvider
 
-            client = AsyncOpenAI(api_key=s.vllm_api_key, base_url=s.vllm_base_url)
-            return OpenAICompatibleProvider(client, name="vllm")
+            return OpenAICompatibleProvider(
+                base_url=s.vllm_base_url, api_key=s.vllm_api_key, name="vllm"
+            )
 
         if provider == "ollama":
             from hivemind.core.llm.ollama_provider import OllamaProvider
