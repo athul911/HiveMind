@@ -167,6 +167,42 @@ curl "http://localhost:8000/v1/tasks/<task_id>/status" -H "Authorization: Bearer
 # → {"task_id": ..., "status": "completed", "result": {"final": "..."}, "usage": {...}}
 ```
 
+### Reconnecting / recovering a task (returning user)
+
+If a client loses the `task_id` (closed the app, switched device), it recovers from the
+**`conversation_id`** it kept — list that conversation's tasks, newest first, and reconnect to
+the most recent one:
+
+```bash
+curl "http://localhost:8000/v1/conversations/<conversation_id>/tasks" -H "Authorization: Bearer $TOKEN"
+# → [{"task_id":"...","status":"running","created_at":"...","stream_url":"/v1/tasks/.../stream", ...}, ...]
+# take element 0 (newest) and reconnect:
+curl -N "http://localhost:8000/v1/tasks/<task_id>/stream" -H "Authorization: Bearer $TOKEN"
+```
+
+This is **status-independent on purpose**: you don't need to catch the task while it's
+"running". Because every event is durably logged to `task_events`, reconnecting to a task that
+already **completed** replays its full event history (then ends) — so the user sees the result
+either way. (If you didn't keep the `conversation_id` either, that's the one id to persist
+client-side — it's returned in the queue response and as the first SSE `conversation` event.)
+
+### Ownership & one-turn-at-a-time
+
+- **Private by default.** A conversation belongs to the user who created it (from the JWT
+  `sub`). Another user gets `403` on `GET`/`DELETE`/tasks/stream for it. (An operator with the
+  `admin_scope` may access any conversation when `RBAC_ENABLED`.)
+- **A conversation is locked while a turn runs.** If you send a new message while a task is in
+  progress, you get `409 Conflict` ("a turn is already in progress"). Wait for it to finish, or
+  cancel it:
+  ```bash
+  curl -X POST "http://localhost:8000/v1/tasks/<task_id>/cancel" -H "Authorization: Bearer $TOKEN"
+  # → {"task_id":"...","status":"cancelled", ...}   # unlocks the conversation
+  ```
+  Cancellation is cooperative — a worker mid-run finishes its current step, but the task is
+  marked cancelled and the conversation unlocks immediately so you can send the next query. A
+  crashed holder's lock is auto-released by the cleanup scheduler after
+  `CONVERSATION_LOCK_STALE_SECONDS`.
+
 ### Conversation lifecycle
 
 ```bash

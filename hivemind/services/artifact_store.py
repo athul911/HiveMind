@@ -8,6 +8,8 @@ traversal is blocked by jailing every resolved path under the namespace director
 
 from __future__ import annotations
 
+import base64
+import binascii
 import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,20 +21,29 @@ class ArtifactRef:
     path: str
     size_bytes: int
     mime_type: str
+    # An owner-authenticated download URL. Present only when a public base URL is configured.
+    # The link resolves to ``GET /v1/artifacts/{id}``, which requires the owner's bearer token
+    # (the id encodes the relative path; the endpoint derives ownership from it). The model
+    # sees this in the tool result and includes it in its answer when relevant.
+    download_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "type": "artifact_ref",
             "path": self.path,
             "size_bytes": self.size_bytes,
             "mime_type": self.mime_type,
         }
+        if self.download_url:
+            d["download_url"] = self.download_url
+        return d
 
 
 class ArtifactStore:
-    def __init__(self, base_path: str) -> None:
+    def __init__(self, base_path: str, *, public_base_url: str = "") -> None:
         self._base = Path(base_path).resolve()
         self._base.mkdir(parents=True, exist_ok=True)
+        self._public_base_url = public_base_url.rstrip("/")
 
     def namespace_dir(self, conversation_id: str, task_id: str | None, tool_name: str) -> Path:
         """Return (creating if needed) the namespaced directory for a tool's outputs."""
@@ -81,13 +92,55 @@ class ArtifactStore:
             path=str(path),
             size_bytes=path.stat().st_size if path.exists() else 0,
             mime_type=mime or "application/octet-stream",
+            download_url=self._download_url(str(path)),
         )
+
+    def _download_url(self, path: str) -> str | None:
+        if not self._public_base_url:
+            return None
+        return f"{self._public_base_url}/v1/artifacts/{self._encode_id(path)}"
+
+    def _encode_id(self, path: str) -> str:
+        """Encode an artifact's base-relative path as a URL-safe id (not a credential).
+
+        The id only *names* the artifact; access is authorized by the download endpoint,
+        which requires the owner's bearer token. The path is stored relative to the base so a
+        forged id can at most point within the artifact tree (and is jail-checked on resolve).
+        """
+        rel = self.resolve(path).relative_to(self._base).as_posix()
+        return base64.urlsafe_b64encode(rel.encode()).decode().rstrip("=")
 
     def read_ref(self, ref_path: str) -> bytes:
         """Read an artifact referenced by path, with jail enforcement."""
+        return self.resolve(ref_path).read_bytes()
+
+    def resolve(self, ref_path: str) -> Path:
+        """Resolve a path to a real file under the artifact base, or raise (jail enforced)."""
         target = Path(ref_path).resolve()
         self._assert_within(target, self._base)
-        return target.read_bytes()
+        return target
+
+    def resolve_id(self, artifact_id: str) -> Path:
+        """Decode a download id to its jailed file path. Raises ValueError if malformed."""
+        try:
+            padded = artifact_id + "=" * (-len(artifact_id) % 4)
+            rel = base64.urlsafe_b64decode(padded.encode()).decode()
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise ValueError(f"Malformed artifact id: {artifact_id}") from exc
+        return self.resolve(str(self._base / rel))
+
+    def owner_conversation_id(self, path: Path) -> str | None:
+        """The conversation id that owns an artifact, derived from its namespace directory.
+
+        Layout is ``base/{conversation}/{task}/{tool}/file``; the first path component under
+        the base is the (sanitized) conversation id. Used by the download endpoint to check
+        the caller owns the artifact. Returns None if the path isn't under a conversation dir.
+        """
+        try:
+            parts = self.resolve(str(path)).relative_to(self._base).parts
+        except ValueError:
+            return None
+        return parts[0] if parts else None
 
     def _assert_within(self, target: Path, root: Path) -> None:
         if not str(target).startswith(str(root.resolve())):

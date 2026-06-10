@@ -97,9 +97,12 @@ def client(monkeypatch):
         db=fakes.FakeDatabase(),
     )
 
+    _FakeConvoRepo.reset()
     # Route modules that touch the DB directly: swap their repository classes for fakes.
-    monkeypatch.setattr(chat_route, "ConversationRepository", _ConvoRepoForGet)
+    monkeypatch.setattr(chat_route, "ConversationRepository", _FakeConvoRepo)
     monkeypatch.setattr(chat_route, "MessageRepository", fakes.FakeMessageRepo)
+    monkeypatch.setattr(chat_route, "TaskRepository", fakes.FakeTaskRepo)
+    monkeypatch.setattr(tasks_route, "ConversationRepository", _FakeConvoRepo)
     monkeypatch.setattr(tasks_route, "TaskRepository", fakes.FakeTaskRepo)
 
     app = create_app(settings)
@@ -113,11 +116,53 @@ def client(monkeypatch):
     ), ctx
 
 
-class _ConvoRepoForGet:
+class _FakeConvoRepo:
+    """Configurable conversation-repo fake. Auth is disabled → principal is 'local-dev'."""
+
+    owner = "local-dev"
+    status = "active"
+    acquire_result = True
+    released: list = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.owner = "local-dev"
+        cls.status = "active"
+        cls.acquire_result = True
+        cls.released = []
+
     def __init__(self, _session) -> None: ...
 
     async def get(self, conversation_id):
-        return SimpleNamespace(id=conversation_id, user_id="u", status="active")
+        return SimpleNamespace(
+            id=conversation_id, user_id=_FakeConvoRepo.owner, status=_FakeConvoRepo.status
+        )
+
+    async def list_for_user(self, user_id, limit: int = 100):
+        import datetime as _dt
+
+        return [
+            SimpleNamespace(
+                id="conv-a",
+                user_id=user_id,
+                agent_id=None,
+                status="active",
+                created_at=_dt.datetime(2026, 1, 1),
+                updated_at=_dt.datetime(2026, 1, 2),
+            )
+        ]
+
+    async def create(self, conversation_id, user_id, agent_id, ttl):
+        return SimpleNamespace(id=conversation_id, user_id=user_id, status="active")
+
+    async def acquire_lock(self, conversation_id):
+        return _FakeConvoRepo.acquire_result
+
+    async def release_lock(self, conversation_id):
+        _FakeConvoRepo.released.append(conversation_id)
+
+    async def set_status(self, conversation_id, status):
+        return None
 
 
 async def test_health_is_public(client):
@@ -203,6 +248,83 @@ async def test_chat_queue_mode_returns_task(client):
     assert resp.status_code == 200
     assert body["task_id"] == "task-123"
     assert body["stream_url"].endswith("/stream")
+
+
+async def test_chat_blocked_when_conversation_busy(client):
+    ac, _ = client
+    _FakeConvoRepo.acquire_result = False  # a turn is already in progress
+    async with ac:
+        resp = await ac.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}], "stream": True},
+        )
+    assert resp.status_code == 409
+
+
+async def test_idempotent_retry_returns_existing_task_despite_lock(client):
+    ac, _ = client
+    # Simulate the original request still holding the lock, and a task already created for
+    # this Idempotency-Key. The retry must return that task (200), not 409.
+    _FakeConvoRepo.acquire_result = False  # conversation is busy
+    fakes.FakeTaskRepo.tasks["t-1"] = fakes.FakeTask(
+        "t-1", conversation_id="conv-7", status="running", idempotency_key="key-abc"
+    )
+    async with ac:
+        resp = await ac.post(
+            "/v1/chat/completions",
+            headers={"Idempotency-Key": "key-abc"},
+            json={"messages": [{"role": "user", "content": "hi"}], "stream": False},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["task_id"] == "t-1"
+    assert body["status"] == "running"
+
+
+async def test_list_conversations_for_current_user(client):
+    ac, _ = client
+    async with ac:
+        resp = await ac.get("/v1/conversations")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["id"] == "conv-a"
+    assert body[0]["status"] == "active"
+
+
+async def test_conversation_access_denied_for_other_user(client):
+    ac, _ = client
+    _FakeConvoRepo.owner = "someone-else"  # conversation belongs to a different user
+    async with ac:
+        resp = await ac.get("/v1/conversations/conv-x")
+    assert resp.status_code == 403
+    assert resp.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_cancel_task_releases_lock(client):
+    ac, _ = client
+    fakes.FakeTaskRepo.tasks["t-run"] = fakes.FakeTask(
+        "t-run", conversation_id="conv-7", status="running"
+    )
+    async with ac:
+        resp = await ac.post("/v1/tasks/t-run/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert "conv-7" in _FakeConvoRepo.released  # the conversation lock was freed
+
+
+async def test_list_conversation_tasks_for_recovery(client):
+    ac, _ = client
+    # Two tasks under the same conversation — a returning client lists them to reconnect.
+    fakes.FakeTaskRepo.tasks["t-old"] = fakes.FakeTask("t-old", "conv-7", status="completed")
+    fakes.FakeTaskRepo.tasks["t-new"] = fakes.FakeTask("t-new", "conv-7", status="running")
+    async with ac:
+        resp = await ac.get("/v1/conversations/conv-7/tasks")
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = {t["task_id"] for t in body}
+    assert ids == {"t-old", "t-new"}
+    # Each carries reconnect links (status-independent — even the completed one replays).
+    assert all(t["stream_url"].endswith("/stream") for t in body)
 
 
 async def test_conversation_get_and_delete(client):

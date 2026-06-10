@@ -64,6 +64,8 @@ class Settings(BaseSettings):
 
     # ---- artifacts --------------------------------------------------------
     artifact_base_path: str = "/data/artifacts"
+    # Public base URL used to build owner-authenticated download links (no trailing slash).
+    public_base_url: str = "http://localhost:8000"
 
     # ---- sandbox ----------------------------------------------------------
     sandbox_backend: SandboxBackend = "docker"
@@ -93,6 +95,9 @@ class Settings(BaseSettings):
     ephemeral_agent_ttl_seconds: int = 3_600
     cleanup_interval_seconds: int = 300
     subagent_max_depth: int = 2  # how deep spawn_subagent may recurse
+    # A conversation is locked while a turn/task runs; if a holder crashes, the scheduler
+    # releases locks older than this (seconds) so the conversation isn't stuck forever.
+    conversation_lock_stale_seconds: int = 900
 
     # ---- conversation memory ----------------------------------------------
     conversation_history_limit: int = 40  # turns kept verbatim before compaction

@@ -114,10 +114,18 @@ curl -N $BASE/v1/chat/completions \
 ```
 
 **Expect** a `tool_call` for `code_exec` and a `tool_result` whose `content.artifacts`
-contains an `artifact_ref` pointing at `results.txt`. Confirm the file landed on the volume:
+contains an `artifact_ref` pointing at `results.txt`, plus a `download_url`. Confirm the file
+landed on the volume:
 
 ```bash
 docker compose exec api ls -R /data/artifacts | head -30
+```
+
+The `download_url` is **owner-authenticated** — fetch it with your bearer token (the same
+user who created the conversation). It is not anonymously shareable:
+
+```bash
+curl -L "<download_url from the artifact_ref>" -H "Authorization: Bearer $TOKEN" -o results.txt
 ```
 
 ---

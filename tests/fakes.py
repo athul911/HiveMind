@@ -77,6 +77,15 @@ class FakeConversationRepo:
     async def set_status(self, conversation_id, status):
         FakeConversationRepo.statuses[conversation_id] = status
 
+    async def acquire_lock(self, conversation_id):
+        return True
+
+    async def release_lock(self, conversation_id):
+        return None
+
+    async def reset_stale_locks(self, older_than):
+        return 0
+
     async def list_expired(self, now=None):
         return []
 
@@ -102,6 +111,9 @@ class FakeTask:
     result: dict | None = None
     error: str | None = None
     usage: dict = field(default_factory=dict)
+    created_at: Any = None
+    completed_at: Any = None
+    idempotency_key: str | None = None
 
 
 class FakeTaskRepo:
@@ -116,6 +128,12 @@ class FakeTaskRepo:
 
     async def get(self, task_id):
         return FakeTaskRepo.tasks.get(task_id)
+
+    async def get_by_idempotency_key(self, key):
+        return next((t for t in FakeTaskRepo.tasks.values() if t.idempotency_key == key), None)
+
+    async def list_for_conversation(self, conversation_id, limit: int = 50):
+        return [t for t in FakeTaskRepo.tasks.values() if t.conversation_id == conversation_id]
 
     async def set_status(self, task_id, status, **kwargs):
         if task_id in FakeTaskRepo.tasks:

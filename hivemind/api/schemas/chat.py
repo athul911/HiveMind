@@ -45,3 +45,24 @@ class TaskStatusResponse(BaseModel):
     result: dict | None = None
     error: str | None = None
     usage: dict = Field(default_factory=dict)
+
+
+class TaskSummary(BaseModel):
+    """A task in a conversation's history, with links to reconnect to it."""
+
+    task_id: str
+    status: str
+    created_at: str
+    completed_at: str | None = None
+    stream_url: str
+    status_url: str
+
+
+class ConversationSummary(BaseModel):
+    """A conversation owned by the current user."""
+
+    id: str
+    status: str
+    agent_id: str | None = None
+    created_at: str
+    updated_at: str

@@ -126,6 +126,48 @@ class ConversationRepository:
             .values(status=status, updated_at=_utcnow())
         )
 
+    async def acquire_lock(self, conversation_id: str) -> bool:
+        """Atomically lock an idle conversation (active → running). True if acquired.
+
+        Atomic compare-and-set: only an ``active`` conversation can be locked, so concurrent
+        requests can't both acquire it.
+        """
+        result = await self._s.execute(
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id, ConversationModel.status == "active")
+            .values(status="running", updated_at=_utcnow())
+        )
+        return (result.rowcount or 0) > 0
+
+    async def release_lock(self, conversation_id: str) -> None:
+        """Release a held lock (running → active). No-op if not currently running."""
+        await self._s.execute(
+            update(ConversationModel)
+            .where(ConversationModel.id == conversation_id, ConversationModel.status == "running")
+            .values(status="active", updated_at=_utcnow())
+        )
+
+    async def reset_stale_locks(self, older_than: datetime) -> int:
+        """Release locks held past ``older_than`` — recovers conversations whose holder died."""
+        result = await self._s.execute(
+            update(ConversationModel)
+            .where(
+                ConversationModel.status == "running",
+                ConversationModel.updated_at < older_than,
+            )
+            .values(status="active", updated_at=_utcnow())
+        )
+        return result.rowcount or 0
+
+    async def list_for_user(self, user_id: str, limit: int = 100) -> list[ConversationModel]:
+        stmt = (
+            select(ConversationModel)
+            .where(ConversationModel.user_id == user_id, ConversationModel.status != "ended")
+            .order_by(ConversationModel.updated_at.desc())
+            .limit(limit)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
+
     async def list_expired(self, now: datetime | None = None) -> list[ConversationModel]:
         now = now or _utcnow()
         stmt = select(ConversationModel).where(
@@ -253,6 +295,18 @@ class TaskRepository:
 
     async def get(self, task_id: str) -> TaskModel | None:
         return await self._s.get(TaskModel, task_id)
+
+    async def list_for_conversation(
+        self, conversation_id: str, limit: int = 50
+    ) -> list[TaskModel]:
+        """All tasks for a conversation, newest first — for resume/recovery discovery."""
+        stmt = (
+            select(TaskModel)
+            .where(TaskModel.conversation_id == conversation_id)
+            .order_by(TaskModel.created_at.desc())
+            .limit(limit)
+        )
+        return list((await self._s.execute(stmt)).scalars().all())
 
     async def get_by_idempotency_key(self, key: str) -> TaskModel | None:
         stmt = select(TaskModel).where(TaskModel.idempotency_key == key).limit(1)

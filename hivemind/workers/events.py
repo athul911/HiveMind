@@ -12,16 +12,27 @@ with the DB log this gives reconnect-safe streaming.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 
 import redis.asyncio as aioredis
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from hivemind.core.graph import events
 from hivemind.db.repository import TaskEventRepository
 from hivemind.db.session import Database
+from hivemind.observability.logging import get_logger
+
+logger = get_logger("hivemind.events")
 
 _TERMINAL = {"done", "error"}
+# Per-XREAD server-side block. Kept short and well under any client/proxy/server socket read
+# timeout so a blocking read returns control to us (empty) before the socket times out; the
+# overall idle budget is enforced by a wall clock across iterations.
+_BLOCK_MS = 2_000
 
 
 def _stream_key(task_id: str) -> str:
@@ -68,14 +79,25 @@ class TaskEventBuffer:
         if terminal_seen:
             return
 
-        # 2. Tail the Redis stream for events newer than what we replayed.
+        # 2. Tail the Redis stream for events newer than what we replayed. A blocking XREAD
+        # can outlast the client/proxy socket timeout (raising TimeoutError) or hit a dropped
+        # connection — both are normal while idle-tailing, so we swallow them and keep polling
+        # until the wall-clock idle budget elapses. Activity resets the budget.
         last_id = "0-0"
+        idle_deadline = time.monotonic() + idle_timeout_ms / 1000
         while not terminal_seen:
-            resp = await self._redis.xread(
-                {_stream_key(task_id): last_id}, block=idle_timeout_ms, count=50
-            )
+            if time.monotonic() >= idle_deadline:
+                break  # no new events within the idle budget — producer finished or died
+            try:
+                resp = await self._redis.xread(
+                    {_stream_key(task_id): last_id}, block=_BLOCK_MS, count=50
+                )
+            except (RedisTimeoutError, RedisConnectionError) as exc:
+                logger.debug("events.tail_transient", task_id=task_id, error=str(exc))
+                await asyncio.sleep(0.5)  # avoid a hot loop if Redis is briefly unavailable
+                continue
             if not resp:
-                break  # idle timeout — producer likely finished or died
+                continue  # block elapsed with no new events; re-check the idle deadline
             for _stream, entries in resp:
                 for entry_id, fields in entries:
                     last_id = entry_id
@@ -88,3 +110,4 @@ class TaskEventBuffer:
                     yield seq, event
                     if event.type in _TERMINAL:
                         terminal_seen = True
+            idle_deadline = time.monotonic() + idle_timeout_ms / 1000  # reset on activity

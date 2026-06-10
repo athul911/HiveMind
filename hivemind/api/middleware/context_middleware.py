@@ -24,13 +24,17 @@ logger = get_logger("hivemind.http")
 _PUBLIC_PATHS = {"/health", "/healthz", "/readyz", "/metrics", "/docs", "/openapi.json", "/redoc"}
 
 
+def _is_public(path: str) -> bool:
+    return path in _PUBLIC_PATHS
+
+
 class ContextMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, verifier: TokenVerifier) -> None:
         super().__init__(app)
         self._verifier = verifier
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.url.path in _PUBLIC_PATHS:
+        if _is_public(request.url.path):
             return await call_next(request)
 
         try:

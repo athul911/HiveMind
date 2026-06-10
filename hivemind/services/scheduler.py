@@ -8,6 +8,7 @@ also exposed as a one-shot ``run_once`` for the Kubernetes CronJob.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 from hivemind.db.repository import (
     ConversationRepository,
@@ -20,10 +21,18 @@ logger = get_logger("hivemind.scheduler")
 
 
 class CleanupScheduler:
-    def __init__(self, db: Database, *, interval_seconds: int, artifacts=None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        interval_seconds: int,
+        artifacts=None,
+        lock_stale_seconds: int = 900,
+    ) -> None:
         self._db = db
         self._interval = interval_seconds
         self._artifacts = artifacts  # ArtifactStore; enables artifact GC. Optional for tests.
+        self._lock_stale_seconds = lock_stale_seconds
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
 
@@ -31,13 +40,18 @@ class CleanupScheduler:
         """Perform one cleanup pass. Returns counts of GC'd records.
 
         Expires overdue conversations (marking them ended + dropping their ephemeral agents
-        and artifact directories) and deletes expired ephemeral-agent rows.
+        and artifact directories), deletes expired ephemeral-agent rows, and releases stale
+        conversation locks left behind by a crashed turn/worker.
         """
+        from datetime import datetime, timedelta
+
         artifacts_deleted = 0
         async with self._db.session() as session:
             ephemeral = await EphemeralAgentRepository(session).delete_expired()
             convo_repo = ConversationRepository(session)
             ephemeral_repo = EphemeralAgentRepository(session)
+            stale_cutoff = datetime.now(UTC) - timedelta(seconds=self._lock_stale_seconds)
+            locks_released = await convo_repo.reset_stale_locks(stale_cutoff)
             expired = await convo_repo.list_expired()
             for convo in expired:
                 await convo_repo.set_status(convo.id, "ended")
@@ -49,11 +63,13 @@ class CleanupScheduler:
             ephemeral_deleted=ephemeral,
             conversations_expired=len(expired),
             artifacts_deleted=artifacts_deleted,
+            stale_locks_released=locks_released,
         )
         return {
             "ephemeral_deleted": ephemeral,
             "conversations_expired": len(expired),
             "artifacts_deleted": artifacts_deleted,
+            "stale_locks_released": locks_released,
         }
 
     async def _loop(self) -> None:

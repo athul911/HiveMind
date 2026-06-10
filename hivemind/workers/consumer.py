@@ -66,6 +66,12 @@ async def _handle_task(payload: dict, app, buffer: TaskEventBuffer) -> None:
         async with app.db.session() as session:
             await TaskRepository(session).set_status(task_id, "failed", error=str(exc))
     finally:
+        # Always release the conversation's turn lock so it isn't stuck "running" after the
+        # task ends (completed, failed, or — if a cancel raced in — already unlocked).
+        from hivemind.db.repository import ConversationRepository
+
+        async with app.db.session() as session:
+            await ConversationRepository(session).release_lock(conversation_id)
         reset_context(token)
 
 

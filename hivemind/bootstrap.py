@@ -56,7 +56,9 @@ class AppContext:
 def _build_registries(
     settings: Settings, db: Database
 ) -> tuple[ToolRegistry, SkillRegistry, AgentRegistry, GraphDeps, ArtifactStore]:
-    artifacts = ArtifactStore(settings.artifact_base_path)
+    artifacts = ArtifactStore(
+        settings.artifact_base_path, public_base_url=settings.public_base_url
+    )
     sandbox = build_sandbox(settings)
 
     tools = ToolRegistry()
@@ -118,6 +120,7 @@ async def build_context(
             db,
             interval_seconds=settings.cleanup_interval_seconds,
             artifacts=artifacts,
+            lock_stale_seconds=settings.conversation_lock_stale_seconds,
         )
         ctx = AppContext(
             settings=settings,

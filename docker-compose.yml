@@ -9,6 +9,7 @@ x-app-env: &app-env
   REDIS_URL: redis://redis:6379/0
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
   ARTIFACT_BASE_PATH: /data/artifacts
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-subprocess}
   LLM_DEFAULT_PROVIDER: ${LLM_DEFAULT_PROVIDER:-ollama}
   LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-llama3.1}

@@ -18,7 +18,7 @@ from hivemind.api.auth import TokenVerifier
 from hivemind.api.errors import install_exception_handlers
 from hivemind.api.middleware.context_middleware import ContextMiddleware
 from hivemind.api.middleware.ratelimit import RateLimitMiddleware
-from hivemind.api.routes import agents, catalog, chat, health, tasks
+from hivemind.api.routes import agents, artifacts, catalog, chat, health, tasks
 from hivemind.bootstrap import build_context
 from hivemind.config import Settings, get_settings
 from hivemind.observability.logging import get_logger
@@ -87,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agents.router)
     app.include_router(catalog.router)
     app.include_router(tasks.router)
+    app.include_router(artifacts.router)
     _install_bearer_security(app)
     return app
 

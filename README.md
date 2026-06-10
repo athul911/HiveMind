@@ -60,6 +60,8 @@ and `make app-up`/`app-down` (e.g. restart the API without touching Postgres).
 POST   /v1/chat/completions        # SSE stream, or {task_id} when stream:false / long workflows
 GET    /v1/conversations/{id}
 DELETE /v1/conversations/{id}       # end + cleanup
+GET    /v1/conversations            # list the current user's conversations (most recent first)
+GET    /v1/conversations/{id}/tasks # list a conversation's tasks (newest first) to resume
 POST   /v1/agents                  # create (immutable)
 GET    /v1/agents | /v1/agents/{id}
 DELETE /v1/agents/{id}
@@ -67,10 +69,18 @@ GET    /v1/tools  | /v1/tools/{name}
 GET    /v1/skills | /v1/skills/{name}
 GET    /v1/tasks/{id}/stream       # SSE replay + live tail (reconnect-safe)
 GET    /v1/tasks/{id}/status
+POST   /v1/tasks/{id}/cancel       # cancel a task and release the conversation's turn lock
+GET    /v1/artifacts/{id}          # download a generated artifact (owner-authenticated)
 ```
 
 All non-health endpoints require a Bearer JWT (HS256 by default; OAuth2 JWKS/RS256 when
-`OAUTH2_JWKS_URL` is set).
+`OAUTH2_JWKS_URL` is set) — **including artifact downloads**. The artifact `id` only *names*
+the file (it encodes the base-relative path); it is not a credential. The download endpoint
+requires the caller's bearer token and verifies they **own** the artifact (derived
+server-side from the artifact's conversation), so it needs no signing secret. When a tool
+produces a file, its `artifact_ref` includes a `download_url`, and the agent includes that
+link in its answer when relevant — the owner fetches it with their token. (Links are
+owner-only, not anonymously shareable.)
 
 ## Development
 
