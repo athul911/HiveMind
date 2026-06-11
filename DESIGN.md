@@ -148,7 +148,12 @@ conversation, returning a structured route: `single` | `sequential[]` | `paralle
 `conditional`. Safety rails: LangGraph `recursion_limit`, a max-iteration counter, and a
 token/cost budget in state that aborts with a typed error when exceeded.
 Checkpointing: `AsyncPostgresSaver` (langgraph-checkpoint-postgres) snapshots state after
-each node — crash recovery + resume. `thread_id == conversation_id`.
+each node. Queue tasks key the checkpoint by `thread_id == task_id`, so a worker crash +
+RabbitMQ redelivery **resumes** the interrupted run from its last checkpoint (the worker
+continues the event `seq` from `tasks.last_event_seq`, and already-finished/cancelled tasks
+are dropped idempotently). SSE runs in-process (`thread_id == conversation_id`) and is not
+resumed. The token budget in state is re-seeded each turn, so it is enforced **per turn**,
+not cumulatively across the conversation.
 
 ### 2.8 Execution modes
 `GraphRunner.run()` yields typed events. Mode chosen by `ModeSelector`:

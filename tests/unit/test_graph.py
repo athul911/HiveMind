@@ -43,7 +43,7 @@ async def test_graph_runs_single_agent_and_emits_done():
     runner = _runner(provider)
     collected = []
     async for event in runner.run(
-        conversation_id="conv-1", history=[], user_message="hi", mode="sse"
+        thread_id="conv-1", history=[], user_message="hi", mode="sse"
     ):
         collected.append(event)
 
@@ -59,7 +59,7 @@ async def test_graph_preserves_history():
     runner = _runner(provider)
     history = [Message(role="user", content="earlier"), Message(role="assistant", content="ok")]
     async for _ in runner.run(
-        conversation_id="conv-2", history=history, user_message="now", mode="sse"
+        thread_id="conv-2", history=history, user_message="now", mode="sse"
     ):
         pass
     # The agent turn should have seen the prior history plus the new message.

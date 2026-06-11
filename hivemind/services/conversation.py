@@ -105,22 +105,32 @@ class ConversationService:
         agent_id: str | None,
         user_message: str,
         mode: str = "sse",
+        task_id: str | None = None,
     ) -> AsyncIterator[events.GraphEvent]:
         """Run a turn, yielding events; persists the user message up front and the final
-        assistant message at the end."""
-        await self.ensure_conversation(conversation_id, user_id, agent_id)
-        history = await self.load_history(conversation_id)
+        assistant message at the end.
 
-        async with self._db.session() as session:
-            await MessageRepository(session).add(conversation_id, "user", user_message)
+        For queue tasks the checkpoint thread is keyed by ``task_id``, so a redelivered task
+        (after a worker crash) **resumes** its interrupted run from the checkpoint instead of
+        starting over — and we skip re-appending the user message / reloading history, since
+        the checkpoint already holds them. SSE runs in-process and is never resumed.
+        """
+        await self.ensure_conversation(conversation_id, user_id, agent_id)
+        thread_id = task_id if (mode == "queue" and task_id) else conversation_id
+
+        if mode == "queue" and task_id and await self._runner.is_resumable(thread_id):
+            logger.info("conversation.resume", conversation_id=conversation_id, task_id=task_id)
+            stream = self._runner.resume(thread_id=thread_id, mode=mode)
+        else:
+            history = await self.load_history(conversation_id)
+            async with self._db.session() as session:
+                await MessageRepository(session).add(conversation_id, "user", user_message)
+            stream = self._runner.run(
+                thread_id=thread_id, history=history, user_message=user_message, mode=mode
+            )
 
         final_text = ""
-        async for event in self._runner.run(
-            conversation_id=conversation_id,
-            history=history,
-            user_message=user_message,
-            mode=mode,
-        ):
+        async for event in stream:
             if event.type == "done":
                 final_text = event.data.get("final", "")
             yield event

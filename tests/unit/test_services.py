@@ -45,11 +45,41 @@ async def test_conversation_stream_persists_user_and_final(monkeypatch):
         )
     ]
     assert any(e.type == "done" for e in collected)
-    # The runner was invoked with the prior (empty) history.
-    assert runner.calls[0]["conversation_id"] == "c1"
+    # SSE turn: thread keyed by conversation id, fresh run (not a resume).
+    assert runner.calls[0]["thread_id"] == "c1"
+    assert not runner.resumed
     stored = fakes.FakeMessageRepo.store["c1"]
     assert stored[0].role == "user" and stored[0].content == "hello"
     assert stored[-1].role == "assistant" and stored[-1].content == "final answer"
+
+
+async def test_conversation_resume_skips_user_append(monkeypatch):
+    monkeypatch.setattr(convo_mod, "ConversationRepository", fakes.FakeConversationRepo)
+    monkeypatch.setattr(convo_mod, "MessageRepository", fakes.FakeMessageRepo)
+    fakes.FakeMessageRepo.store.pop("cr", None)
+
+    # A redelivered, resumable queue task: continue from the checkpoint, don't re-append.
+    runner = fakes.FakeRunner([events.done("recovered")], resumable=True)
+    svc = ConversationService(fakes.FakeDatabase(), runner, ttl_seconds=60)
+
+    collected = [
+        ev
+        async for ev in svc.stream(
+            conversation_id="cr",
+            user_id="u1",
+            agent_id=None,
+            user_message="hello",
+            mode="queue",
+            task_id="task-cr",
+        )
+    ]
+    assert any(e.type == "done" for e in collected)
+    assert runner.resumed and runner.resumed[0]["thread_id"] == "task-cr"  # keyed by task_id
+    assert not runner.calls  # fresh run path not taken
+    # No user message persisted on resume (the checkpoint already has it); only the assistant.
+    stored = fakes.FakeMessageRepo.store.get("cr", [])
+    assert all(m.role != "user" for m in stored)
+    assert stored and stored[-1].content == "recovered"
 
 
 async def test_conversation_load_history_maps_turns(monkeypatch):
@@ -116,6 +146,56 @@ async def test_scheduler_run_once(monkeypatch):
     result = await scheduler.run_once()
     assert result["ephemeral_deleted"] == 2
     assert result["conversations_expired"] == 0
+
+
+async def test_scheduler_gcs_checkpoints_for_expired_conversations(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(sched_mod, "EphemeralAgentRepository", fakes.FakeEphemeralRepo)
+    monkeypatch.setattr(sched_mod, "ConversationRepository", fakes.FakeConversationRepo)
+    monkeypatch.setattr(sched_mod, "TaskRepository", fakes.FakeTaskRepo)
+    fakes.FakeConversationRepo.expired = [SimpleNamespace(id="cx")]
+    fakes.FakeTaskRepo.tasks.clear()
+    fakes.FakeTaskRepo.tasks["tx"] = fakes.FakeTask("tx", conversation_id="cx", status="completed")
+
+    deleted: list[str] = []
+
+    async def gc(thread_id: str) -> None:
+        deleted.append(thread_id)
+
+    scheduler = CleanupScheduler(fakes.FakeDatabase(), interval_seconds=300, checkpoint_gc=gc)
+    try:
+        result = await scheduler.run_once()
+    finally:
+        fakes.FakeConversationRepo.expired = []
+        fakes.FakeTaskRepo.tasks.clear()
+
+    assert deleted == ["tx"]  # the expired conversation's task checkpoint was GC'd
+    assert result["checkpoints_deleted"] == 1
+    assert result["conversations_expired"] == 1
+
+
+async def test_runner_delete_checkpoint_is_best_effort():
+    from hivemind.core.graph.runner import GraphRunner
+
+    runner = GraphRunner.__new__(GraphRunner)  # skip graph compilation; we only test the wrapper
+
+    class _Saver:
+        deleted: list[str] = []
+
+        async def adelete_thread(self, thread_id):
+            _Saver.deleted.append(thread_id)
+
+    runner._checkpointer = _Saver()
+    await runner.delete_checkpoint("t-1")
+    assert _Saver.deleted == ["t-1"]
+
+    class _Boom:
+        async def adelete_thread(self, thread_id):
+            raise RuntimeError("saver down")
+
+    runner._checkpointer = _Boom()
+    await runner.delete_checkpoint("t-2")  # swallowed — never fatal to the caller
 
 
 # ---- TaskEventBuffer -------------------------------------------------------

@@ -121,6 +121,7 @@ async def build_context(
             interval_seconds=settings.cleanup_interval_seconds,
             artifacts=artifacts,
             lock_stale_seconds=settings.conversation_lock_stale_seconds,
+            checkpoint_gc=runner.delete_checkpoint,
         )
         ctx = AppContext(
             settings=settings,

@@ -44,9 +44,10 @@ def build_graph(deps: GraphDeps, checkpointer):
         def emit(ev: events.GraphEvent) -> None:
             writer(ev.to_dict())
 
-        # Enforce a *cumulative, per-conversation* token budget. ``tokens_used`` is
-        # checkpointed, so the ceiling holds across multiple turns of the same conversation,
-        # not just within one agent turn.
+        # Enforce a *per-turn* token budget across all agents in this turn (single /
+        # sequential / parallel / conditional). ``tokens_used`` is re-seeded to 0 by the
+        # runner at the start of each turn, so this ceiling is per-turn, not cumulative across
+        # the conversation.
         budget = deps.settings.supervisor_token_budget
         used_before = state.get("tokens_used", 0)
         if used_before >= budget:

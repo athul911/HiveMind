@@ -311,6 +311,25 @@ make up
 curl -s $BASE/v1/conversations/$CID | jq '.status'   # still present
 ```
 
+**Crash-recovery resume (queue mode).** Start a long queue task, hard-kill the worker
+mid-run, then bring it back — RabbitMQ redelivers the unacked task and the worker **resumes**
+from the checkpoint instead of restarting:
+
+```bash
+TASK=$(curl -s $BASE/v1/chat/completions -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"stream":false,"messages":[{"role":"user","content":"Run a multi-step analysis over the orders table."}]}' \
+  | jq -r .task_id)
+docker compose kill -s SIGKILL worker          # hard crash mid-task (no graceful ack)
+docker compose up -d worker                     # comes back; RabbitMQ redelivers the task
+# tail the same task — it continues to a terminal event, no duplicate restart from scratch
+curl -sN "$BASE/v1/tasks/$TASK/stream" -H "Authorization: Bearer $TOKEN" | grep -m1 '^event: done'
+curl -s "$BASE/v1/tasks/$TASK/status" -H "Authorization: Bearer $TOKEN" | jq '.status'  # completed
+```
+
+(Look for `conversation.resume` in the worker logs. Event `seq` continues from where it left
+off; an already-`completed`/`cancelled` task that gets redelivered is dropped idempotently.)
+
 ---
 
 ## Phase 13 — Cleanup & teardown

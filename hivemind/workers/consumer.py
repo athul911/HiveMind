@@ -24,9 +24,24 @@ from hivemind.workers.events import TaskEventBuffer
 logger = get_logger("hivemind.worker")
 
 
+_TERMINAL = {"completed", "failed", "cancelled"}
+
+
 async def _handle_task(payload: dict, app, buffer: TaskEventBuffer) -> None:
     task_id = payload["task_id"]
     conversation_id = payload["conversation_id"]
+
+    # Redelivery handling (at-least-once): if this task already finished (or was cancelled),
+    # drop it idempotently. Otherwise continue the event sequence from where it left off, so a
+    # resumed run appends events instead of colliding with already-persisted seqs.
+    async with app.db.session() as session:
+        existing = await TaskRepository(session).get(task_id)
+    if existing is not None and existing.status in _TERMINAL:
+        logger.info("task.skip_terminal", task_id=task_id, status=existing.status)
+        await app.runner.delete_checkpoint(task_id)  # GC any orphaned checkpoint
+        return
+    seq = existing.last_event_seq if existing is not None else 0
+
     ctx = RequestContext(
         conversation_id=conversation_id,
         user_id=payload.get("user_id"),
@@ -34,7 +49,6 @@ async def _handle_task(payload: dict, app, buffer: TaskEventBuffer) -> None:
         task_id=task_id,
     )
     token = bind_context(ctx)
-    seq = 0
     final_text = ""
     usage: dict = {}
     try:
@@ -46,6 +60,7 @@ async def _handle_task(payload: dict, app, buffer: TaskEventBuffer) -> None:
             agent_id=payload.get("agent_id"),
             user_message=payload["user_message"],
             mode="queue",
+            task_id=task_id,
         ):
             seq += 1
             if event.type == "done":
@@ -72,6 +87,9 @@ async def _handle_task(payload: dict, app, buffer: TaskEventBuffer) -> None:
 
         async with app.db.session() as session:
             await ConversationRepository(session).release_lock(conversation_id)
+        # The task is terminal here (completed/failed) — a hard crash never reaches this — so
+        # its checkpoint is no longer needed for resume; drop it. (Best-effort, idempotent.)
+        await app.runner.delete_checkpoint(task_id)
         reset_context(token)
 
 

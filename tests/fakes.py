@@ -33,12 +33,24 @@ class FakeDatabase:
 class FakeRunner:
     """A GraphRunner stand-in that replays a fixed list of events."""
 
-    def __init__(self, events_to_emit: list[events.GraphEvent]) -> None:
+    def __init__(
+        self, events_to_emit: list[events.GraphEvent], *, resumable: bool = False
+    ) -> None:
         self._events = events_to_emit
+        self._resumable = resumable
         self.calls: list[dict] = []
+        self.resumed: list[dict] = []
+
+    async def is_resumable(self, thread_id: str) -> bool:
+        return self._resumable
 
     async def run(self, **kwargs: Any) -> AsyncIterator[events.GraphEvent]:
         self.calls.append(kwargs)
+        for ev in self._events:
+            yield ev
+
+    async def resume(self, **kwargs: Any) -> AsyncIterator[events.GraphEvent]:
+        self.resumed.append(kwargs)
         for ev in self._events:
             yield ev
 
@@ -67,6 +79,7 @@ class FakeMessageRepo:
 class FakeConversationRepo:
     created: list[str] = []
     statuses: dict[str, str] = {}
+    expired: list = []  # conversations list_expired() should return (SimpleNamespace(id=...))
 
     def __init__(self, _session: object) -> None: ...
 
@@ -87,7 +100,7 @@ class FakeConversationRepo:
         return 0
 
     async def list_expired(self, now=None):
-        return []
+        return FakeConversationRepo.expired
 
 
 class FakeEphemeralRepo:
