@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-SandboxBackend = Literal["docker", "subprocess"]
+SandboxBackend = Literal["docker", "subprocess", "microsandbox"]
 LLMProviderName = Literal["anthropic", "openai", "azure", "vllm", "ollama"]
 
 
@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     sandbox_memory: str = "256m"
     sandbox_cpus: float = 1.0
     sandbox_pids_limit: int = 128
+    # microsandbox backend (microVMs). Guest memory in MiB; image/cpus reuse the fields above.
+    microsandbox_memory_mib: int = 512
 
     # ---- llm --------------------------------------------------------------
     llm_default_provider: LLMProviderName = "anthropic"

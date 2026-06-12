@@ -17,6 +17,14 @@ def build_sandbox(settings: Settings) -> Sandbox:
             cpus=settings.sandbox_cpus,
             pids_limit=settings.sandbox_pids_limit,
         )
+    if settings.sandbox_backend == "microsandbox":
+        from hivemind.core.tools.sandbox.microsandbox_sandbox import MicrosandboxSandbox
+
+        return MicrosandboxSandbox(
+            image=settings.sandbox_image,
+            memory_mib=settings.microsandbox_memory_mib,
+            cpus=settings.sandbox_cpus,
+        )
     from hivemind.core.tools.sandbox.subprocess_sandbox import SubprocessSandbox
 
     return SubprocessSandbox()

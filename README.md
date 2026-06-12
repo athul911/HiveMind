@@ -13,8 +13,10 @@ OpenTelemetry observability.
 - **Immutable agents** = persona + tool subset + skill subset + LLM config; hydrated from
   Postgres on startup. A built-in **SQL specialist** is provisioned automatically.
 - **5 LLM providers**: Anthropic, OpenAI, Azure OpenAI, vLLM, Ollama (one common interface).
-- **Tools**: least-privilege read-only SQL, container-sandboxed Python code execution
-  (artifact references, not raw data), web search, and a dynamic sub-agent spawner.
+- **Tools**: least-privilege read-only SQL, sandboxed Python code execution (artifact
+  references, not raw data) with pluggable backends — `docker` (container-per-exec),
+  `subprocess` (laptop/CI fallback), or `microsandbox` (microVM-per-exec, strongest isolation;
+  Linux-only, needs a co-located microsandbox server) — web search, and a sub-agent spawner.
 - **Skills** as markdown + frontmatter, bound per-agent and injected into the system prompt
   with progressive disclosure.
 - **Two execution modes**: SSE for interactive turns; RabbitMQ queue for long-running
