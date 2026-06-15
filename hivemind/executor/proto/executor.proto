@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+// gRPC code-execution service. The RPC mirrors the in-process ``Sandbox`` contract
+// (``run(code, artifact_dir, timeout_s) -> SandboxResult``) one-to-one, so the executor can
+// be dropped in behind the same interface. Generated outputs are written to ``artifact_dir``
+// on a volume shared between the executor and the caller (no bytes cross the wire).
+package hivemind.executor.v1;
+
+service CodeExecutor {
+  // Run code to completion and return the aggregated result (unary, matching SandboxResult).
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+
+message ExecuteRequest {
+  string code = 1;          // source to execute
+  string artifact_dir = 2;  // absolute path on the shared mount; outputs are written here
+  int32 timeout_s = 3;      // wall-clock execution cap
+}
+
+message ExecuteResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  bool timed_out = 4;
+}

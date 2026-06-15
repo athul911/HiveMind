@@ -13,7 +13,8 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-SandboxBackend = Literal["docker", "subprocess", "microsandbox"]
+SandboxBackend = Literal["docker", "subprocess", "microsandbox", "grpc"]
+SubprocessIsolation = Literal["none", "namespaces"]
 LLMProviderName = Literal["anthropic", "openai", "azure", "vllm", "ollama"]
 
 
@@ -74,8 +75,16 @@ class Settings(BaseSettings):
     sandbox_memory: str = "256m"
     sandbox_cpus: float = 1.0
     sandbox_pids_limit: int = 128
+    # subprocess backend hardening. "namespaces" wraps execution in bubblewrap (no network,
+    # filesystem jailed to the artifact dir, PID/IPC isolation) when bwrap + unprivileged user
+    # namespaces are available; otherwise it logs once and falls back to a plain subprocess.
+    subprocess_isolation: SubprocessIsolation = "none"
     # microsandbox backend (microVMs). Guest memory in MiB; image/cpus reuse the fields above.
     microsandbox_memory_mib: int = 512
+    # grpc backend: where the code-executor service runs (client) / which port it binds (server).
+    grpc_executor_target: str = "localhost:50051"
+    grpc_executor_port: int = 50051
+    grpc_executor_deadline_margin_s: int = 10  # added to timeout_s for the client RPC deadline
 
     # ---- llm --------------------------------------------------------------
     llm_default_provider: LLMProviderName = "anthropic"

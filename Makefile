@@ -12,7 +12,7 @@ endif
 
 .PHONY: help up down clean restart migrate seed seed-data logs \
         db-up db-down app-up app-down \
-        test test-integration lint typecheck fmt install token
+        test test-integration lint typecheck fmt install token proto
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -76,6 +76,10 @@ fmt: ## Auto-format with ruff
 
 typecheck: ## Type-check with mypy
 	$(RUN) mypy hivemind
+
+proto: ## Regenerate the gRPC executor stubs from the .proto
+	$(RUN) python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. \
+		hivemind/executor/proto/executor.proto
 
 token: ## Mint a dev JWT (HS256) for local API calls
 	@$(RUN) python scripts/mint_token.py

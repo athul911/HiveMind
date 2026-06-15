@@ -15,8 +15,12 @@ OpenTelemetry observability.
 - **5 LLM providers**: Anthropic, OpenAI, Azure OpenAI, vLLM, Ollama (one common interface).
 - **Tools**: least-privilege read-only SQL, sandboxed Python code execution (artifact
   references, not raw data) with pluggable backends — `docker` (container-per-exec),
-  `subprocess` (laptop/CI fallback), or `microsandbox` (microVM-per-exec, strongest isolation;
-  Linux-only, needs a co-located microsandbox server) — web search, and a sub-agent spawner.
+  `subprocess` (laptop/CI fallback; optional `SUBPROCESS_ISOLATION=namespaces` adds a
+  bubblewrap no-network + filesystem-jailed namespace sandbox where userns is available),
+  `microsandbox` (microVM-per-exec, strongest isolation;
+  Linux-only, needs a co-located microsandbox server), or `grpc` (delegate to the standalone
+  [code-executor gRPC service](hivemind/executor/), artifacts via a shared volume) — web
+  search, and a sub-agent spawner.
 - **Skills** as markdown + frontmatter, bound per-agent and injected into the system prompt
   with progressive disclosure.
 - **Two execution modes**: SSE for interactive turns; RabbitMQ queue for long-running

@@ -16,6 +16,11 @@ RUN uv pip install --system --no-cache .
 
 # ---- runtime ----
 FROM deps AS runtime
+# bubblewrap powers the subprocess backend's `namespaces` isolation (SUBPROCESS_ISOLATION).
+# Unused unless enabled; relies on unprivileged user namespaces at runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
 COPY hivemind ./hivemind
 COPY skills ./skills
 COPY alembic.ini ./

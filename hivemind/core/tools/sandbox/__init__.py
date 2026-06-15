@@ -25,9 +25,16 @@ def build_sandbox(settings: Settings) -> Sandbox:
             memory_mib=settings.microsandbox_memory_mib,
             cpus=settings.sandbox_cpus,
         )
+    if settings.sandbox_backend == "grpc":
+        from hivemind.core.tools.sandbox.grpc_sandbox import GrpcSandbox
+
+        return GrpcSandbox(
+            target=settings.grpc_executor_target,
+            deadline_margin_s=settings.grpc_executor_deadline_margin_s,
+        )
     from hivemind.core.tools.sandbox.subprocess_sandbox import SubprocessSandbox
 
-    return SubprocessSandbox()
+    return SubprocessSandbox(isolation=settings.subprocess_isolation)
 
 
 __all__ = ["Sandbox", "SandboxResult", "build_sandbox"]

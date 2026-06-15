@@ -11,6 +11,8 @@ x-app-env: &app-env
   ARTIFACT_BASE_PATH: /data/artifacts
   PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
   SANDBOX_BACKEND: ${SANDBOX_BACKEND:-subprocess}
+  # Where the gRPC code-executor runs (used only when SANDBOX_BACKEND=grpc).
+  GRPC_EXECUTOR_TARGET: ${GRPC_EXECUTOR_TARGET:-executor:50051}
   LLM_DEFAULT_PROVIDER: ${LLM_DEFAULT_PROVIDER:-ollama}
   LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-llama3.1}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -60,6 +62,25 @@ services:
       rabbitmq: {condition: service_healthy}
       redis: {condition: service_started}
       migrate: {condition: service_completed_successfully}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # gRPC code-executor. Used only when SANDBOX_BACKEND=grpc on api/worker; it runs code via
+  # its OWN sandbox backend (subprocess here — run this on a hardened/sandboxed node pool in
+  # prod) and writes artifacts to the SHARED `artifacts` volume so the caller reads them back.
+  executor:
+    build: .
+    command: python -m hivemind.executor.server
+    environment:
+      <<: *app-env
+      SANDBOX_BACKEND: subprocess   # the executor's internal backend; must NOT be grpc
+      GRPC_EXECUTOR_PORT: "50051"
+    volumes:
+      - ./hivemind:/app/hivemind
+      - ./skills:/app/skills
+      - artifacts:/data/artifacts   # same named volume as api/worker → shared artifact mount
+    expose:
+      - "50051"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

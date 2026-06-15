@@ -37,6 +37,8 @@ dependencies = [
     "docker>=7.1",
     "microsandbox==0.5.6",
     "sqlglot>=25.0",
+    # gRPC code-executor service (server + client backend)
+    "grpcio>=1.68",
     # skills
     "python-frontmatter>=1.1",
     "pyyaml>=6.0",
@@ -64,6 +66,7 @@ dev = [
     "mypy>=1.13",
     "anyio>=4.6",
     "asgi-lifespan>=2.1",
+    "grpcio-tools>=1.68",  # regenerate executor stubs: `make proto`
 ]
 
 [build-system]
@@ -77,6 +80,8 @@ packages = ["hivemind"]
 line-length = 100
 target-version = "py311"
 src = ["hivemind", "tests"]
+# Generated gRPC stubs are not hand-maintained; don't lint them.
+extend-exclude = ["*_pb2.py", "*_pb2_grpc.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "C4", "SIM", "RUF"]
